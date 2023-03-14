@@ -1,0 +1,29 @@
+
+- task: IISWebAppManagementOnMachineGroup@0
+  displayName: 'Prepare Virtual Directory'
+  inputs:
+    IISDeploymentType: IISVirtualDirectory
+    ParentWebsiteNameForVD: '${{ parameters.SiteName }}'
+    VirtualPathForVD: '/${{ parameters.ServiceName }}'
+    PhysicalPathForVD: '${{ parameters.SiteRoot }}\${{ parameters.ServiceName }}'
+
+- task: IISWebAppManagementOnMachineGroup@0
+  displayName: 'Prepare Web Application'
+  inputs:
+    IISDeploymentType: IISWebApplication
+    ParentWebsiteNameForApplication: '${{ parameters.SiteName }}'
+    VirtualPathForApplication: '/${{ parameters.ServiceName }}/${{ parameters.ServiceVersion }}'
+    PhysicalPathForApplication: '${{ parameters.SiteRoot }}\${{ parameters.ServiceName }}\${{ parameters.ServiceVersion }}'
+    CreateOrUpdateAppPoolForApplication: true
+    AppPoolNameForApplication: '${{ parameters.SiteName }}_${{ parameters.ServiceName }}_${{ parameters.ServiceVersion }}'
+    AppPoolIdentityForApplication: SpecificUser
+    AppPoolUsernameForApplication: '$(ApplicationPoolIdentityUsername)'
+    AppPoolPasswordForApplication: '$(ApplicationPoolIdentityPassword)'
+    AppCmdCommands: 'set config /section:windowsAuthentication /enabled:true'
+
+- task: IISWebAppDeploymentOnMachineGroup@0
+  displayName: 'Deploy API Service'
+  inputs:
+    WebSiteName: '${{ parameters.SiteName }}'
+    VirtualApplication: '/${{ parameters.ServiceName }}/${{ parameters.ServiceVersion }}'
+    Package: '$(System.ArtifactsDirectory)/${{ parameters.ServiceName }}'

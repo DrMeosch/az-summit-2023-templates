@@ -1,0 +1,74 @@
+parameters:
+- name: project
+  type: object
+
+
+steps:
+
+# bug in azdo?
+- download: none
+
+# Download rollout specific
+- ${{ if ne(parameters.project.name, variables['Build.DefinitionName']) }}:
+  - task: DownloadPipelineArtifact@2
+    inputs:
+      source: specific
+      project: Azure Summit 2023
+      runVersion: specific
+      runId: ${{ parameters.project.buildId }}
+      artifact: drop
+      patterns: '**'
+      path: $(Agent.WorkFolder)/$(package)
+    displayName: Artifacts.Rollout Specific - Download
+
+#####################################################################################
+# Download the fresh-built artifacts, which we just compiled within the build stage
+#####################################################################################
+- ${{ else }}:
+
+# it works for both build and pipeline artifacts
+# done a lot of test, but now it works for all artifacts.
+# conditions were changed because of strange behaviour in expression syntax - they were always false
+# !!!! DO NOT CHANGE CONDITION
+
+  - task: DownloadPipelineArtifact@2
+    condition: or(eq(variables.is_building, true), ne(variables.BuildNumber, ''))
+    inputs:
+      source: current
+      artifact: drop
+      path: $(Agent.WorkFolder)/$(package)
+    displayName: Artifacts.Pipeline Specific - Download
+
+#####################################################################################
+# Download the normal latest/chosen resource artifact if we have skipped the build stage
+#####################################################################################
+# !!!! DO NOT CHANGE CONDITION
+
+  - download: package
+    condition: and(ne(variables.is_building, true), eq(variables.BuildNumber, ''))
+    displayName: Artifacts.Package Specific - Download
+
+  - task: CopyFiles@2
+    displayName: Artifacts.Package Specific - Move
+    condition: and(ne(variables.is_building, true), eq(variables.BuildNumber, ''))
+    inputs:
+      cleanTargetFolder: true
+      SourceFolder: $(Pipeline.Workspace)/package/drop
+      targetFolder: $(Agent.WorkFolder)/$(package)
+      contents: |
+        **/*
+
+  - task: PowerShell@2
+    displayName: "Get Package Version"
+    inputs:
+      targetType: inline
+      script: |
+          $PackageVersion = Get-Content -Path $(Agent.WorkFolder)/$(package)/version*.txt
+          Write-Host "##vso[task.setvariable variable=version]$PackageVersion"
+
+  # - task: tagBuildOrRelease@0
+  #   inputs:
+  #     type: 'Build'
+  #     tags: |
+  #       release
+  #       version: $(version)

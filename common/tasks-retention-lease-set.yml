@@ -1,0 +1,53 @@
+parameters:
+- name: validFor
+  type: string
+  default: '3650' # 10 years
+
+- name: only_secrets_rollover
+  type: boolean
+  default: false
+
+- name: BuildId
+  type: string
+  default: $(Build.BuildId)
+
+- name: DefinitionId
+  type: string
+  default: $(System.DefinitionId)
+
+
+steps:
+
+- ${{ if notIn(variables['Build.DefinitionName'], 'az-summit-2023-master-deployment-api', 'az-summit-2023-master-deployment-application') }}:
+  - ${{ if ne(parameters.only_secrets_rollover, 'true') }}:
+    # Invoke a REST API as a part of your pipeline.
+    - task: InvokeRESTAPI@1
+      displayName: 'Set retention lease'
+      retryCountOnTaskFailure: 3
+      condition: |
+        or(
+          startsWith(variables['Build.SourceBranch'], 'refs/heads/release/'),
+          startsWith(variables['Build.SourceBranch'], 'refs/heads/hotfix/'),
+          eq(variables.vEnvironment, 'Production')
+        )
+      inputs:
+        connectionType: 'connectedServiceName'  # Options: connectedServiceName, connectedServiceNameARM
+        serviceConnection: generic-azure-dev-portal  # Required when connectionType == ConnectedServiceName
+        # azureServiceConnection:  # Required when connectionType == ConnectedServiceNameARM
+        method: 'POST'  # Options: OPTIONS, GET, HEAD, POST, PUT, DELETE, TRACE, PATCH
+        urlSuffix: '/$(System.TeamProjectId)/_apis/build/retention/leases?api-version=6.0-preview.1'
+        waitForCompletion: 'false'
+        headers: '{
+          "Content-Type": "application/json",
+          "Collection-URI": "$(system.CollectionUri)"
+          }'
+        body: |
+          [
+            {
+              "daysValid": ${{ parameters.validFor }},
+              "definitionId": ${{ parameters.DefinitionId }},
+              "ownerId": 'User:$(Build.RequestedForId)',
+              "protectPipeline": true,
+              "runId": ${{ parameters.BuildId }}
+            }
+          ]

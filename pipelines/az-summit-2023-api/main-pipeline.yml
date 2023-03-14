@@ -1,0 +1,199 @@
+parameters:
+- name: environments
+  type: object
+  default: []
+
+- name: environments_autodeploy
+  type: object
+  default: []
+
+- name: FakedBuild
+  type: boolean
+  default: false
+
+
+stages:
+
+
+#######################################################################
+# start release stages looping through the parameter
+# variables should be already defined in configurations
+#######################################################################
+
+# First start autodeploy CICD stages
+- ${{ each Environment in parameters.environments_autodeploy }}:
+  - stage: ${{ Environment }}AutoCICD
+    displayName: '${{ Environment }} (Auto CICD)'
+    dependsOn:
+    - Build
+    # https://docs.microsoft.com/en-us/azure/devops/pipelines/build/variables?view=azure-devops&tabs=yaml#build-variables-devops-services
+    # Build.Reason: Manual, IndividualCI, BatchedCI, Schedule, ValidateShelveset, CheckInShelveset, PullRequest, ResourceTrigger
+    # we can auto deploy to some dev env changing the build reason below
+    condition: '${{ variables.conditionAutoCICD }}'
+    jobs:
+    - deployment: AutoCICD
+      variables:
+      - template: global-config.yml@configurations
+      - template: ${{ variables['Build.DefinitionName'] }}/common-config.yml@configurations
+      - template: ${{ variables['Build.DefinitionName'] }}/${{ Environment }}/release-config.yml@configurations
+      - name: BuildId
+        value: $(Build.BuildId)
+      - name: package
+        value: $[format('package-{0}-{1}', variables['Build.BuildId'], '000000')]
+      environment:
+        name: '${{ variables.DevOpsEnvAutoCICD }}'
+        resourceType: VirtualMachine
+        tags: '${{ Environment }}'
+      workspace:
+        clean: all
+      strategy:
+        runOnce:
+          deploy:
+            steps:
+            - download: none
+            - checkout: scripts
+
+            - task: DownloadPipelineArtifact@2
+              inputs:
+                source: current
+                artifact: drop
+                path: $(Agent.WorkFolder)/$(package)
+
+            - task: PowerShell@2
+              displayName: "Get Package Version"
+              inputs:
+                targetType: inline
+                script: |
+                    $PackageVersion = Get-Content -Path $(Agent.WorkFolder)/$(package)/version*.txt
+                    Write-Host "##vso[task.setvariable variable=version]$PackageVersion"
+
+            - task: tagBuildOrRelease@0
+              inputs:
+                type: 'Build'
+                tags: |
+                  release
+                  version: $(version)
+
+            - template: ../../common/tasks-service-version-set.yml@templates
+
+            - task: CopyFiles@2
+              displayName: 'Artifacts.Prepare - Binary'
+              inputs:
+                SourceFolder: $(Agent.WorkFolder)/$(package)/$(ServiceName)
+                TargetFolder: $(System.ArtifactsDirectory)/$(ServiceName)
+                Contents: |
+                  **
+                OverWrite: true
+
+            - task: CopyFiles@2
+              displayName: 'Artifacts.Prepare - Config'
+              inputs:
+                SourceFolder: $(Agent.WorkFolder)/$(package)/CM/$(ServiceName)/$(vEnvironment)
+                TargetFolder: $(System.ArtifactsDirectory)/$(ServiceName)
+                Contents: |
+                 **\Web.config
+                 **\nlog.config
+                 **\appsettings.json
+                 !**\packages.config
+                 !**\Web.Debug.config
+                 !**\Web.Release.config
+                OverWrite: true
+
+            # get secrets for app pool
+            - task: AzureKeyVault@2
+              inputs:
+                ConnectedServiceName: ${{ variables.azureServiceConnection }}
+                KeyVaultName: ${{ variables.KeyVaultName }}
+                SecretsFilter: '*'
+                RunAsPreJob: true
+
+            - task: PowerShell@2
+              displayName: "DefineVariables"
+              inputs:
+                targetType: inline
+                script: |
+                    Write-Host "##vso[task.setvariable variable=ApplicationPoolIdentityUsername]$([Environment]::GetEnvironmentVariable("ApplicationPoolIdentityUsername"))"
+                    Write-Host "##vso[task.setvariable variable=ApplicationPoolIdentityPassword]$([Environment]::GetEnvironmentVariable("ApplicationPoolIdentityPassword"))"
+              env:
+                ApplicationPoolIdentityUsername: '$(${{ Environment }}-ApplicationPoolIdentityUsername)'
+                ApplicationPoolIdentityPassword: '$(${{ Environment }}-ApplicationPoolIdentityPassword)'
+
+            - template: ../../release/uwpf-release-template-api.yml@templates
+              parameters:
+                ServiceName: $(ServiceName)
+                SiteName: $(SiteName)
+                SiteRoot: $(SiteRoot)
+                ServiceVersion: $(ServiceVersion)
+                ${{ if eq(variables['Build.DefinitionName'], 'fpp-calculation-api') }}:
+                  applicationPoolPrivateMemory: '3000000'
+
+            - template: ../../common/tasks-artifacts-clear.yml
+
+          on:
+            success:
+              pool: server
+              steps:
+              - template: ../../common/tasks-release-dashboard-update.yml@templates
+                parameters:
+                  vEnvironment: ${{ Environment }}
+                  project:
+                    name: ${{ variables['Build.DefinitionName'] }}
+
+
+# Deploy to the other stages with approvals and checks
+- ${{ each Environment in parameters.environments }}:
+  - stage: ${{ Environment }}
+    # https://docs.microsoft.com/en-us/azure/devops/pipelines/build/variables?view=azure-devops&tabs=yaml#build-variables-devops-services
+    # Build.Reason: Manual, IndividualCI, BatchedCI, Schedule, ValidateShelveset, CheckInShelveset, PullRequest, ResourceTrigger
+    # we can auto deploy to some dev env changing the build reason below
+    variables:
+    - template: ${{ variables['Build.DefinitionName'] }}/${{ Environment }}/release-config.yml@configurations
+    - name: BuildNumber
+      value: $[ stageDependencies.Build.Build.outputs['GetVersion.BuildNumber'] ]
+    # ugly code, but we don't have a choice here
+    dependsOn:
+    - Build
+    - ${{ if in(variables.vEnvironment, 'Integration', 'EduProduction') }}:
+      # not all of the project which use this template have
+      # all of the environments enabled
+      # so, we have to check it in such a weird way
+      - ${{ if containsValue(parameters.environments, 'DevApi') }}:
+        - DevApi
+      - ${{ if containsValue(parameters.environments, 'DevAdvance') }}:
+        - DevAdvance
+      - ${{ if containsValue(parameters.environments, 'Acceptance') }}:
+        - Acceptance
+      - ${{ if containsValue(parameters.environments, 'DevExternal') }}:
+        - DevExternal
+      - ${{ if containsValue(parameters.environments, 'DevAdvance2') }}:
+        - DevAdvance2
+      - ${{ if containsValue(parameters.environments, 'DevAdvance3') }}:
+        - DevAdvance3
+      - ${{ if containsValue(parameters.environments, 'DevAdvance4') }}:
+        - DevAdvance4
+      - ${{ if containsValue(parameters.environments, 'DevAdvance5') }}:
+        - DevAdvance5
+      - ${{ if containsValue(parameters.environments, 'Acceptance2') }}:
+        - Acceptance2
+      - ${{ if containsValue(parameters.environments, 'Acceptance3') }}:
+        - Acceptance3
+      - ${{ if containsValue(parameters.environments, 'Acceptance4') }}:
+        - Acceptance4
+      - ${{ if containsValue(parameters.environments, 'Acceptance5') }}:
+        - Acceptance5
+      - ${{ if containsValue(parameters.environments, 'TestData2') }}:
+        - TestData2
+      - ${{ if containsValue(parameters.environments, 'TestData1') }}:
+        - TestData1
+      - ${{ if containsValue(parameters.environments, 'Maintenance2') }}:
+        - Maintenance2
+    - ${{ elseif in(variables.vEnvironment, 'Production') }}:
+      - Integration
+    condition: '${{ variables.condition }}'
+    jobs:
+    - template: main-template.yml@templates
+      parameters:
+        vEnvironment: ${{ Environment }}
+        project:
+          name: ${{ variables['Build.DefinitionName'] }}
+          buildId: $(Build.BuildId)

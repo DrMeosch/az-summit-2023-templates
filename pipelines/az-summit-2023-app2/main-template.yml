@@ -1,0 +1,51 @@
+parameters:
+
+- name: vEnvironment
+  type: string
+
+- name: project
+  type: object
+
+
+jobs:
+
+- deployment: ${{ replace(parameters.project.name, '-', '_') }}_${{ parameters.vEnvironment }}_ServerRelated
+  displayName: ${{ parameters.project.name }}_ServerRelated
+  variables:
+  - template: az-summit-2023-app2/${{ parameters.vEnvironment }}/release-config.yml@configurations
+  - name: package
+    value: $[format('package-{0}-{1}', variables['Build.BuildId'], '${{ parameters.project.buildId }}')]
+  environment:
+    name: '${{ variables.DevOpsEnv }}'
+    resourceType: VirtualMachine
+    tags: '${{ parameters.vEnvironment }}'
+  workspace:
+    clean: all
+  strategy:
+    runOnce:
+      deploy:
+        steps:
+        - template: ../../common/tasks-artifacts-download.yml
+          parameters:
+            project: ${{ parameters.project }}
+
+        - task: IISWebAppManagementOnMachineGroup@0
+          displayName: 'Prepare Website'
+          inputs:
+            WebsiteName: '$(SiteName)'
+            WebsitePhysicalPath: '$(SiteRoot)'
+            AddBinding: true
+            Bindings: '$(Bindings)'
+            CreateOrUpdateAppPoolForWebsite: true
+            AppPoolNameForWebsite: '$(SiteName)'
+            # AppPoolIdentityForWebsite: SpecificUser
+            # AppPoolUsernameForWebsite: '$(ApplicationPoolIdentityUsername)'
+            # AppPoolPasswordForWebsite: '$(ApplicationPoolIdentityPassword)'
+
+        - task: IISWebAppDeploymentOnMachineGroup@0
+          displayName: 'Deploy Application'
+          inputs:
+            WebSiteName: '$(SiteName)'
+            Package: '$(Agent.WorkFolder)/$(package)'
+
+        - template: ../../common/tasks-artifacts-clear.yml

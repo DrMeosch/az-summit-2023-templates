@@ -1,0 +1,56 @@
+parameters:
+- name: environments
+  type: object
+
+stages:
+
+#######################################################################
+# start release stages looping through the parameter
+# variables should be already defined in configurations
+#######################################################################
+
+
+# Deploy to the other stages with approvals and checks
+- ${{ each Environment in parameters.environments }}:
+  - stage: '${{ Environment }}'
+    variables:
+    - template: az-summit-2023-app1/${{ Environment }}/release-config.yml@configurations
+    dependsOn:
+    - Build
+    - ${{ if in(variables.vEnvironment, 'Integration', 'Education') }}:
+      # not all of the project which use this template have
+      # all of the environments enabled
+      # so, we have to check it in such a weird way
+      - ${{ if containsValue(parameters.environments, 'DevAdvance') }}:
+        - DevAdvance
+      - ${{ if containsValue(parameters.environments, 'Acceptance') }}:
+        - Acceptance
+      - ${{ if containsValue(parameters.environments, 'DevAdvance2') }}:
+        - DevAdvance2
+      - ${{ if containsValue(parameters.environments, 'DevAdvance3') }}:
+        - DevAdvance3
+      - ${{ if containsValue(parameters.environments, 'DevAdvance4') }}:
+        - DevAdvance4
+      - ${{ if containsValue(parameters.environments, 'DevAdvance5') }}:
+        - DevAdvance5
+      - ${{ if containsValue(parameters.environments, 'Acceptance2') }}:
+        - Acceptance2
+      - ${{ if containsValue(parameters.environments, 'Acceptance3') }}:
+        - Acceptance3
+      - ${{ if containsValue(parameters.environments, 'Acceptance4') }}:
+        - Acceptance4
+      - ${{ if containsValue(parameters.environments, 'Acceptance5') }}:
+        - Acceptance5
+      - ${{ if containsValue(parameters.environments, 'Maintenance2') }}:
+        - Maintenance2
+    - ${{ elseif in(variables.vEnvironment, 'Production') }}:
+      - Integration
+    condition: '${{ variables.condition }}'
+    jobs:
+
+    - template: main-template.yml@templates
+      parameters:
+        vEnvironment: ${{ Environment }}
+        project:
+          name: az-summit-2023-app1
+          buildId: $(Build.BuildId)

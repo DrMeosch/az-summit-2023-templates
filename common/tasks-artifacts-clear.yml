@@ -1,0 +1,16 @@
+parameters:
+- name: ClientMachine
+  type: string
+  default: 'NotExistingVirtualMachine'
+
+steps:
+
+- task: DeleteFiles@1
+  condition: ne(variables['Agent.Name'], '${{ parameters.ClientMachine }}')
+  displayName: 'Artifacts.Delete'
+  inputs:
+    SourceFolder: '$(Agent.WorkFolder)/$(package)'
+    contents: |
+      **/*
+    removeDotFiles: true
+    RemoveSourceFolder: true
